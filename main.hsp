@@ -1,0 +1,273 @@
+// はずむ虹の輪 ver.1.3 ソースコード
+// d3moduleおよびモジュール変数のサンプルとして使っていただければ幸いです。
+
+//
+// 自動作成オプション
+#packopt name "rainbow_ring"
+//
+// 各種定数
+#const  global double PI 3.1415
+#const  AWAIT_TIME       31     // 1フレームごとのウェイト[ミリ秒]
+#const  LINE_SPAN        4      // 行間[ピクセル]
+#const  CAM_R_MIN        500    // カメラの距離（最小値）
+#const  CAM_R_MAX        2000   // カメラの距離（最大値）
+#define VERSION          "1.3"  // プログラムのバージョン
+// 描画用モジュールをインクルード
+#addition "gpm.hsp"
+#include  "d3m.hsp"
+
+#ifdef gpcolor
+	// 波紋を描くための命令（d3linetoのアンチエイリアス版）を定義
+	#define global gpd3lineto(%1=0,%2=0,%3=0)  d3vpos %1, %2, %3 : if df@d3m & ef@d3m { gpline dx@d3m, dy@d3m, ex@d3m, ey@d3m }
+#else
+	// gpm.hspがない場合はアンチエイリアスを利用しない
+	#define global gpcolor    color
+	#define global gpd3lineto d3lineto
+#endif
+
+// パーティクル・波紋・虹の輪を扱うモジュールをインクルード
+#include "particle.as"
+#include "ripple.as"
+#include "ring.as"
+
+*init
+// 変数の準備
+	randomize
+	// パーティクル・波紋・虹の輪を記録する配列変数を用意
+	dimtype mod_particle, 5, 50 // パーティクル記録用
+	dimtype mod_ripple,   5, 20 // 波紋記録用
+	dimtype mod_ring,     5, 10 // 虹の輪記録用
+	// カメラの位置（球座標系）
+	cam_r = 1000                // カメラの座標（原点からの距離）
+	cam_t = 0.0                 // カメラの座標（θ（theta））
+	cam_p = PI / 3.0            // カメラの座標（φ（phi））
+	// 虹の輪自動生成用カウンター
+	count = 0
+	count_max = 20
+	// プログラムのモードを記録する変数
+	need_to_draw_message = 1    // 操作説明を表示する？
+	need_to_stop = 0            // 一時停止中？
+	auto_create  = 1            // 虹の輪を自動生成させる？
+	// 画面全体を白っぽくするための変数（gsquare命令の引数として使用）
+	g_x = 0, ginfo_winx, ginfo_winx, 0
+	g_y = 0, 0, ginfo_winy - 1, ginfo_winy - 1
+
+	sysfont 17 : mes " "
+	objsize ,,ginfo_mesy + LINE_SPAN    // mes命令で描画したときの行間を設定
+
+	title "はずむ虹の輪 ver." + VERSION
+	onclick gosub *label_onclick
+//
+// メインループ
+*main
+	gosub *get_input    // キーやマウスによる入力を取得/変数の変更
+	gosub *set_cam      // カメラの移動
+	gosub *move_all     // パーティクル・波紋・虹の輪の移動
+	gosub *draw_all     // パーティクル・波紋・虹の輪などの描画
+	gosub *dec_count    // カウンターの減算
+
+	await AWAIT_TIME
+	goto *main
+//
+// キーやマウスによる入力を取得/変数の変更
+*get_input
+	// キー・マウス入力情報の取得
+	stick key
+	getkey click, 1
+	getkey shift, 16
+	// キー入力にしたがって変数の値を変更
+	if key &   64 : auto_create  ^= 1           // Ctrlキーで虹の輪の自動生成をON/OFF
+	if key &  128 : end                         // ESCキーでプログラムの終了
+	if key & 1024 : need_to_draw_message ^= 1   // TABキーで操作説明表示のON/OFF
+	// マウスホイールの入力にしたがってカウンターの最大値を変更（＝虹の輪の自動生成頻度を変更）
+	j = mousew
+	if j < 0 : count_max = limit( count_max - 2, 5, 50 )
+	if j > 0 : count_max = limit( count_max + 2, 5, 50 )
+	return
+//
+// パーティクル・波紋・虹の輪を移動
+*move_all
+	if need_to_stop : return    // 一時停止中は移動させない
+
+	gosub *move_particles       // パーティクルの移動
+	gosub *move_ripples         // 波紋の移動（広がる）
+	gosub *move_rings           // 虹の輪の移動
+	return
+//
+// パーティクルの移動
+*move_particles
+	gmode GMODE_ALPHA,,,128     // アルファブレンドで描く
+	foreach mod_particle
+		move_particle mod_particle( cnt )       // mod_particle( cnt )に記録されているパーティクルを動かす
+		if stat : delmod mod_particle( cnt )    // もう表示する必要がなくなった場合は要素を削除
+	loop
+	return
+//
+// 波紋の移動（広がる）
+*move_ripples
+	foreach mod_ripple
+		move_ripple mod_ripple( cnt )           // mod_ripple( cnt )に記録されている波紋を動かす（広げる）
+		if stat : delmod mod_ripple( cnt )      // もう表示する必要がなくなった場合は要素を削除
+	loop
+	return
+//
+// 虹の輪の移動
+*move_rings
+	foreach mod_ring
+		move_ring mod_ring( cnt )               // mod_ring( cnt )に記録されている虹の輪を動かす
+		if stat : delmod mod_ring( cnt )        // もう表示する必要がなくなった場合は要素を削除
+	loop
+	return
+//
+// すべての描画処理
+*draw_all
+	if need_to_redraw == 0 : return     // 描画しなおす必要がない場合は描画しない
+
+	redraw 0
+	color : boxf
+
+	gosub *draw_particles
+	gosub *draw_ripples
+	gosub *draw_rings
+
+	if ( cam_p > PI / 2.0 ) {
+		// 水面より下にカメラがある場合
+		gosub *draw_water               // 画面全体を白っぽくする
+	} else {
+		// 水面より上にカメラがある場合
+		gosub *draw_mirror_images       // 鏡像の描画
+	}
+
+	if need_to_draw_message {
+		gosub *draw_message             // 操作説明の描画
+	}
+
+	redraw 1
+	return
+//
+// パーティクルを描く
+*draw_particles
+	d3setlocal
+	gmode GMODE_ALPHA, , , 100
+	foreach mod_particle
+		draw_particle mod_particle( cnt )
+	loop
+	return
+//
+// 波紋を描く
+*draw_ripples
+	gpcolor 100, 100, 100
+	foreach mod_ripple
+		draw_ripple mod_ripple( cnt )
+	loop
+	return
+//
+// 虹の輪を描く
+*draw_rings
+	foreach mod_ring
+		draw_ring mod_ring( cnt )
+	loop
+	return
+//
+// 画面全体を白っぽくする（水中から見たような効果）
+*draw_water
+	gmode GMODE_ALPHA,,,100
+	color 255, 255, 255
+	gsquare -1, g_x, g_y
+	return
+//
+// リングの鏡像を描画
+*draw_mirror_images
+	foreach mod_ring
+		draw_mirror mod_ring( cnt )
+	loop
+	return
+//
+// 操作説明を表示
+*draw_message
+	color 200, 200, 200
+	pos 3, LINE_SPAN / 2
+	mes {"カメラの移動 ： 左ドラッグ
+ズームin/out ： SHIFT + 左ドラッグ
+リングの発生 ： 右クリック
+リング自動発生のon/off ： CTRL
+リング自動発生頻度の調整 ： ホイール
+一時停止 ： ホイールクリック
+操作説明のon/off ： TAB
+プログラムの終了 ： ESC"}
+	return
+
+*dec_count
+	count--
+	if count <= 0 {
+		count = count_max
+		if auto_create : gosub *make_ring
+	}
+	return
+//
+// 新しく虹の輪を作成
+*make_ring
+	if need_to_stop : return
+
+	t = PI * rnd( 100 ) / 50.0
+	x = 1000.0 * cos( t )
+	y = 1000.0 * sin( t )
+	z = rnd( 100 ) + 150
+	r = 60 + rnd( 50 )
+	v_xy = 10 + rnd( 6 )
+	if ( v_xy == 15 ) & ( rnd( 2 ) == 0 ) {
+		// 稀にとても速い虹の輪を生成することで単調さを軽減（したつもり）
+		v_xy = 27
+	}
+	v_ang = t + PI + 0.40 * ( rnd( 30 ) - 15 ) / 15.0
+	newmod mod_ring, ring, x, y, z, r, v_xy, v_ang
+	return
+//
+// onclickジャンプ先ラベル
+*label_onclick
+	if ( iparam == 3 ) {
+		// 右クリックの場合
+		gosub *make_ring        // 新しくリングを生成
+	} else : if ( iparam == 6 ) {
+		// ホイールクリックの場合
+		need_to_stop ^= 1       // 一時停止のON/OFF
+	}
+	return
+//
+// カメラの移動
+*set_cam
+	v_r = 0 : v_t = 0.0 : v_p = 0.0
+	if click {
+		if old_click {
+			if shift {
+				// SHIFTキーを押しながらドラッグ → カメラの距離を変更
+				v_r = 10 * ( ginfo_my - mouse_y )
+				cam_r += v_r
+			} else {
+				// SHIFTキーを押さずにドラッグ → カメラの角度を変更
+				v_t = 0.01 * ( mouse_x - ginfo_mx )
+				v_p = 0.01 * ( mouse_y - ginfo_my )
+				cam_t += v_t
+				cam_p += v_p
+			}
+		}
+		mouse_x = ginfo_mx
+		mouse_y = ginfo_my
+	}
+	old_click = click
+
+	// 距離・角度の補正
+	cam_r = limit( cam_r, CAM_R_MIN, CAM_R_MAX )
+	if ( cam_t > PI * 2.0 ) {
+		cam_t -= PI * 2.0
+	} else : if ( cam_t < 0.0 ) {
+		cam_t += PI * 2.0
+	}
+	cam_p = limitf( cam_p, 0.02, PI - 0.02 )
+
+	// カメラの設定（球座標を直交座標に変換）
+	d3setcam cos( cam_t ) * sin( cam_p ) * cam_r, sin( cam_t ) * sin( cam_p ) * cam_r, cos( cam_p ) * cam_r, 0, 0, 200
+
+	// 再描画フラグの計算（カメラが動いた場合、一時停止中でない場合、TABキーが押された場合は再描画する）
+	need_to_redraw = ( v_r != 0 ) | ( v_t != 0.0 ) | ( v_p != 0.0 ) | ( need_to_stop == 0 ) | ( key >> 10 & 1 )
+	return
